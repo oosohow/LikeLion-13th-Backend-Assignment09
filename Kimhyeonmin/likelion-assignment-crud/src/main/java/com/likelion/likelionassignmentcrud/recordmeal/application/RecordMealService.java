@@ -27,47 +27,37 @@ import java.util.List;
 public class RecordMealService {
     private final RecordMealRepository recordMealRepository;
     private final MemberRepository memberRepository;
-
-    //주입?받기
     private final FoodApiClient foodApiClient;
 
-    @Transactional
-    public void recordMealSave(RecordMealSaveRequestDto recordMealSaveRequestDto){
-        Member member = memberRepository.findById(recordMealSaveRequestDto.memberId()).orElseThrow(IllegalArgumentException::new);
-
-        //식단 저장 전 공공 API 통신
-        // 사용자가 입력한 menuName으로 식약처 데이터 조회
-        List<FoodApiResponseDto> foodNutritionList = foodApiClient.getFoodNutrition(recordMealSaveRequestDto.menuName());
+    //트랜잭션 없이 외부 API 통신만 먼저
+    public void recordMealSave(RecordMealSaveRequestDto recordMealSaveRequestDto) {
+        //트랜잭션 시작 전에 외부 API 호출
+        List<FoodApiResponseDto> foodNutritionList =
+                foodApiClient.getFoodNutrition(recordMealSaveRequestDto.menuName());
 
         String fetchedCalories = null;
-
-        //영양 정보 활용 -> 여기서 꺼내서 사용
         if (foodNutritionList != null && !foodNutritionList.isEmpty()) {
-            FoodApiResponseDto nutrition = foodNutritionList.get(0);
-            //System.out.println("조회된 칼로리: " + nutrition.getNUTR_CONT1() + " kcal");
-            fetchedCalories = nutrition.getAmtNum1();
+            fetchedCalories = foodNutritionList.get(0).getAmtNum1();
         }
+
+        saveRecordMeal(recordMealSaveRequestDto, fetchedCalories);
+    }
+
+    //DB 저장용 짧은 트랜잭션 메서드 분리
+    @Transactional
+    public void saveRecordMeal(RecordMealSaveRequestDto recordMealSaveRequestDto, String calories) {
+        Member member = memberRepository.findById(recordMealSaveRequestDto.memberId())
+                .orElseThrow(IllegalArgumentException::new);
 
         RecordMeal recordMeal = RecordMeal.builder()
                 .mealType(recordMealSaveRequestDto.mealType())
                 .menuName(recordMealSaveRequestDto.menuName())
-                .calories(fetchedCalories)
+                .calories(calories)
                 .member(member)
                 .build();
 
         recordMealRepository.save(recordMeal);
     }
-
-//    public RecordMealListResponseDto recordMealFindMember(Long memberId){
-//        Member member = memberRepository.findById(memberId).orElseThrow(IllegalArgumentException::new);
-//
-//        List<RecordMeal> recordMeals = recordMealRepository.findByMemberMemberId(memberId);
-//        List<RecordMealInfoResponseDto> recordMealInfoResponseDtos = recordMeals.stream()
-//                .map(RecordMealInfoResponseDto::from)
-//                .toList();
-//
-//        return RecordMealListResponseDto.from(recordMealInfoResponseDtos);
-//    }
 
     public RecordMealListResponseDto recordMealFindMember(Long memberId){
         Member member = memberRepository.findById(memberId).orElseThrow(IllegalArgumentException::new);
@@ -75,16 +65,17 @@ public class RecordMealService {
         List<RecordMeal> recordMeals = recordMealRepository.findByMemberMemberId(memberId);
         List<RecordMealInfoResponseDto> recordMealInfoResponseDtos = recordMeals.stream()
                 .map(recordMeal -> {
-                    //DB에 저장된 메뉴 이름으로 공공 API 불러오기
                     List<FoodNutritionDto> nutritionInfo = null;
+                    //API에서 못 찾는 음식이 있어도 에러 안 나게
+                    try {
+                        List<FoodApiResponseDto> searchedList = foodApiClient.getFoodNutrition(recordMeal.getMenuName());
 
-                    //검색된 리스트 모두 가져옴
-                    List<FoodApiResponseDto> searchedList = foodApiClient.getFoodNutrition(recordMeal.getMenuName());
-
-                    //첫번째 데이터만 가져옥
-                    if (searchedList != null && !searchedList.isEmpty()) {
-                        FoodApiResponseDto apiDto = searchedList.get(0);
-                        nutritionInfo = List.of(FoodNutritionDto.from(apiDto));
+                        if (searchedList != null && !searchedList.isEmpty()) {
+                            FoodApiResponseDto apiDto = searchedList.get(0);
+                            nutritionInfo = List.of(FoodNutritionDto.from(apiDto));
+                        }
+                    } catch (Exception e) {
+                        // 검색 실패 시 조회를 멈추지 않고, 영양 정보만 비워둔채 통과
                     }
 
                     return RecordMealInfoResponseDto.from(recordMeal, nutritionInfo);

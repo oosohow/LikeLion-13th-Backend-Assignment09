@@ -63,7 +63,7 @@ public class FoodApiClient {
 
                 log.warn("식약처 API에서 찾은 음식 데이터가 없습니다. (입력값: {})", foodName);
                 throw new BusinessException(
-                        ErrorCode.INTERNAL_SERVER_ERROR,
+                        ErrorCode.FOOD_NOT_FOUND_EXCEPTION,
                         "요청한 음식의 영양 정보를 찾을 수 없음");
             }
 
